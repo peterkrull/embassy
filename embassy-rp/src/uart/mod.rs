@@ -383,6 +383,43 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
 }
 
 impl<'d, T: Instance> UartRx<'d, T, Async> {
+
+    /// Empty the UART RX FIFO into the provided buffer, yield when there is a timeout in received data.
+    /// Since the FIFO holds up to 32 bytes, the buffer need not be longer than 32 bytes.
+    pub async fn read_fifo_on_timeout(&mut self, buffer: &mut [u8]) -> Result<usize,(usize,Error)> {
+
+        // Clear all error flags
+        T::dma_state().rx_errs.store(0, Ordering::Relaxed);
+
+        // Enable DMA for RX (even if not used)
+        T::regs().uartdmacr().write(|w| w.set_rxdmae(true));
+
+        // Clear receive timeout interrupt register
+        T::regs().uarticr().write(|w| w.set_rtic(true));
+
+        // Enable receive timeout interrupt
+        T::regs().uartimsc().write(|w| w.set_rtim(true));
+
+        // Await for receive timeout interrupt
+        poll_fn(|cx| {
+            T::dma_state().rx_err_waker.register(cx.waker());
+            match T::dma_state().rx_errs.swap(0, Ordering::Relaxed) {
+                e if Uartris(e as u32).rtris() => Poll::Ready(Uartris(e as u32)),
+                _ => Poll::Pending,
+            }
+        }).await;
+
+        // Clear receive timeout interrupt register
+        T::regs().uarticr().write(|w| w.set_rtic(false));
+
+        // Enable receive timeout interrupt
+        T::regs().uartimsc().write(|w| w.set_rtim(false));
+
+        // Drain the FIFO, at most 32 bytes
+        let limit = buffer.len().min(32);
+        self.drain_fifo(&mut buffer[0..limit])
+    }
+
     /// Read from UART RX into the provided buffer.
     pub async fn read(&mut self, buffer: &mut [u8]) -> Result<(), Error> {
         // clear error flags before we drain the fifo. errors that have accumulated
@@ -467,7 +504,7 @@ impl<'d, T: Instance> UartRx<'d, T, Async> {
         } else if errors.feris() {
             return Err(Error::Framing);
         }
-        unreachable!("unrecognized rx error");
+        unreachable!("unrecognized rx error: {}", errors.0);
     }
 
     /// Read from the UART, waiting for a line break.
