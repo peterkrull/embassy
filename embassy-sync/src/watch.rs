@@ -344,6 +344,13 @@ impl<M: RawMutex, T: Clone, const N: usize> Watch<M, T, N> {
             }
         })
     }
+
+    /// Returns the message ID of the latest message sent to the `Watch`.
+    ///
+    /// This counter is monotonic, and is incremented every time a new message is sent.
+    pub fn get_msg_id(&self) -> u64 {
+        self.mutex.lock(|state| state.borrow().current_id)
+    }
 }
 
 /// A receiver can `.await` a change in the `Watch` value.
@@ -655,6 +662,42 @@ mod tests {
 
             // No update
             assert_eq!(rcv.try_changed(), None);
+        };
+        block_on(f);
+    }
+
+
+    #[test]
+    fn once_lock_like() {
+        let f = async {
+            static CONFIG0: u8 = 10;
+            static CONFIG1: u8 = 20;
+
+            static WATCH: Watch<CriticalSectionRawMutex, &'static u8, 1> = Watch::new();
+
+            // Obtain receiver and sender
+            let mut rcv = WATCH.receiver().unwrap();
+            let snd = WATCH.sender();
+
+            // Not initialized
+            assert_eq!(rcv.try_changed(), None);
+
+            // Receive the new value
+            snd.send(&CONFIG0);
+            let rcv0 = rcv.changed().await;
+            assert_eq!(rcv0, &10);
+
+            // Receive another value
+            snd.send(&CONFIG1);
+            let rcv1 = rcv.try_changed();
+            assert_eq!(rcv1, Some(&20));
+
+            // No update
+            assert_eq!(rcv.try_changed(), None);
+
+            // Ensure similarity with original static
+            assert_eq!(rcv0, &CONFIG0);
+            assert_eq!(rcv1, Some(&CONFIG1));
         };
         block_on(f);
     }
