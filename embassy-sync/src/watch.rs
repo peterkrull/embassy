@@ -351,6 +351,26 @@ impl<M: RawMutex, T: Clone, const N: usize> Watch<M, T, N> {
     pub fn get_msg_id(&self) -> u64 {
         self.mutex.lock(|state| state.borrow().current_id)
     }
+
+    /// Waits for the `Watch` to be initialized with a value using a busy-spin mechanism.
+    /// 
+    /// This is useful for initialization code where receivers may only be interested in 
+    /// awaiting the value once in the lifetime of the program. It is therefore a temporaryily
+    /// CPU-inefficient operation, while being more memory efficient than using a `Receiver`.
+    pub async fn spin_get(&self) -> T {
+        poll_fn(|cx|{
+            self.mutex.lock(|state| {
+                let s = state.borrow();
+                match &s.data {
+                    Some(data) =>  Poll::Ready(data.clone()),
+                    None => {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                }
+            })
+        }).await
+    }
 }
 
 /// A receiver can `.await` a change in the `Watch` value.
