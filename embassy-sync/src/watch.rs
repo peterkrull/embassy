@@ -86,7 +86,11 @@ pub trait WatchBehavior<T: Clone> {
     fn poll_get(&self, id: &mut u64, cx: &mut Context<'_>) -> Poll<T>;
 
     /// Tries to get the value of the `Watch`, marking it as seen.
-    fn try_get(&self, id: Option<&mut u64>) -> Option<T>;
+    fn try_get(&self, id: &mut u64) -> Option<T>;
+
+    /// Tries to get the value of the `Watch` anonumously. This is usedful when a
+    /// non-receiver wants go get the value.
+    fn try_get_anon(&self) -> Option<T>;
 
     /// Poll the `Watch` for the value if it matches the predicate function
     /// `f`, making it as seen.
@@ -94,7 +98,11 @@ pub trait WatchBehavior<T: Clone> {
 
     /// Tries to get the value of the `Watch` if it matches the predicate function
     /// `f`, marking it as seen.
-    fn try_get_and(&self, id: Option<&mut u64>, f: &mut dyn Fn(&T) -> bool) -> Option<T>;
+    fn try_get_and(&self, id: &mut u64, f: &mut dyn Fn(&T) -> bool) -> Option<T>;
+
+    /// Tries to get the value of the `Watch` anonumously, if it matches the predicate function
+    /// `f`. This is usedful when a non-receiver wants go get the value.
+    fn try_get_anon_and(&self, f: &mut dyn Fn(&T) -> bool) -> Option<T>;
 
     /// Poll the `Watch` for a changed value, marking it as seen.
     fn poll_changed(&self, id: &mut u64, cx: &mut Context<'_>) -> Poll<T>;
@@ -121,11 +129,6 @@ pub trait WatchBehavior<T: Clone> {
     ///
     /// ## This method should not be called by the user.
     fn drop_receiver(&self);
-}
-
-pub trait WatchBehaviorPartialEq<T: Clone + PartialEq> {
-    /// Sends a new value to the `Watch` if it is different from the current value.
-    fn send_if_different(&self, val: T);
 }
 
 impl<M: RawMutex, T: Clone, const N: usize> WatchBehavior<T> for Watch<M, T, N> {
@@ -161,12 +164,16 @@ impl<M: RawMutex, T: Clone, const N: usize> WatchBehavior<T> for Watch<M, T, N> 
         })
     }
 
-    fn try_get(&self, id: Option<&mut u64>) -> Option<T> {
+    fn try_get(&self, id: &mut u64) -> Option<T> {
         self.mutex.lock(|state| {
             let s = state.borrow();
-            if let Some(id) = id {
-                *id = s.current_id;
-            }
+            *id = s.current_id;
+            s.data.clone()
+        })
+    }
+
+    fn try_get_anon(&self) -> Option<T> {
+        self.mutex.lock(|state| {
             state.borrow().data.clone()
         })
     }
@@ -187,14 +194,25 @@ impl<M: RawMutex, T: Clone, const N: usize> WatchBehavior<T> for Watch<M, T, N> 
         })
     }
 
-    fn try_get_and(&self, id: Option<&mut u64>, f: &mut dyn Fn(&T) -> bool) -> Option<T> {
+    fn try_get_and(&self, id: &mut u64, f: &mut dyn Fn(&T) -> bool) -> Option<T> {
         self.mutex.lock(|state| {
             let s = state.borrow();
             match s.data {
                 Some(ref data) if f(data) => {
-                    if let Some(id) = id {
-                        *id = s.current_id;
-                    }
+                    *id = s.current_id;
+                    Some(data.clone())
+                }
+                _ => None,
+            }
+        })
+    }
+
+
+    fn try_get_anon_and(&self, f: &mut dyn Fn(&T) -> bool) -> Option<T> {
+        self.mutex.lock(|state| {
+            let s = state.borrow();
+            match s.data {
+                Some(ref data) if f(data) => {
                     Some(data.clone())
                 }
                 _ => None,
@@ -371,6 +389,18 @@ impl<M: RawMutex, T: Clone, const N: usize> Watch<M, T, N> {
             })
         }).await
     }
+
+    /// Tries to get the value of the `Watch`.
+    pub fn try_get(&self) -> Option<T> {
+        self.try_get_anon()
+    }
+
+    /// Tries to get the value of the `Watch` if it matches the predicate function `f`.
+    pub fn try_get_and<F>(&self, mut f: F) -> Option<T>
+    where F: Fn(&T) -> bool,
+    {
+        self.try_get_anon_and(&mut f)
+    }
 }
 
 /// A receiver can `.await` a change in the `Watch` value.
@@ -410,7 +440,7 @@ impl<'a, T: Clone, W: WatchBehavior<T> + ?Sized> Snd<'a, T, W> {
 
     /// Tries to retrieve the value of the `Watch`.
     pub fn try_get(&self) -> Option<T> {
-        self.watch.try_get(None)
+        self.watch.try_get_anon()
     }
 
     /// Tries to peek the current value of the `Watch` if it matches the predicate
@@ -419,7 +449,7 @@ impl<'a, T: Clone, W: WatchBehavior<T> + ?Sized> Snd<'a, T, W> {
     where
         F: Fn(&T) -> bool,
     {
-        self.watch.try_get_and(None, &mut f)
+        self.watch.try_get_anon_and(&mut f)
     }
 
     /// Returns true if the `Watch` contains a value.
@@ -533,7 +563,7 @@ impl<'a, T: Clone, W: WatchBehavior<T> + ?Sized> Rcv<'a, T, W> {
 
     /// Tries to get the current value of the `Watch` without waiting, marking it as seen.
     pub fn try_get(&mut self) -> Option<T> {
-        self.watch.try_get(Some(&mut self.at_id))
+        self.watch.try_get(&mut self.at_id)
     }
 
     /// Returns the value of the `Watch` if it matches the predicate function `f`,
@@ -553,7 +583,7 @@ impl<'a, T: Clone, W: WatchBehavior<T> + ?Sized> Rcv<'a, T, W> {
     where
         F: Fn(&T) -> bool,
     {
-        self.watch.try_get_and(Some(&mut self.at_id), &mut f)
+        self.watch.try_get_and(&mut self.at_id, &mut f)
     }
 
     /// Waits for the `Watch` to change and returns the new value, marking it as seen.
@@ -686,6 +716,36 @@ mod tests {
         block_on(f);
     }
 
+    #[test]
+    fn all_try_get() {
+        let f = async {
+            static WATCH: Watch<CriticalSectionRawMutex, u8, 1> = Watch::new();
+
+            // Obtain receiver and sender
+            let mut rcv = WATCH.receiver().unwrap();
+            let snd = WATCH.sender();
+
+            // Not initialized
+            assert_eq!(WATCH.try_get(), None);
+            assert_eq!(rcv.try_get(), None);
+            assert_eq!(snd.try_get(), None);
+
+            // Receive the new value
+            snd.send(10);
+            assert_eq!(WATCH.try_get(), Some(10));
+            assert_eq!(rcv.try_get(), Some(10));
+            assert_eq!(snd.try_get(), Some(10));
+
+            assert_eq!(WATCH.try_get_and(|x|x > &5), Some(10));
+            assert_eq!(rcv.try_get_and(|x|x > &5), Some(10));
+            assert_eq!(snd.try_get_and(|x|x > &5), Some(10));
+
+            assert_eq!(WATCH.try_get_and(|x|x < &5), None);
+            assert_eq!(rcv.try_get_and(|x|x < &5), None);
+            assert_eq!(snd.try_get_and(|x|x < &5), None);
+        };
+        block_on(f);
+    }
 
     #[test]
     fn once_lock_like() {
