@@ -299,19 +299,6 @@ impl<M: RawMutex, T: Clone, const N: usize> WatchBehavior<T> for Watch<M, T, N> 
     }
 }
 
-impl<M: RawMutex, T: Clone + PartialEq, const N: usize> WatchBehaviorPartialEq<T> for Watch<M, T, N> {
-    fn send_if_different(&self, val: T) {
-        self.mutex.lock(|state| {
-            let mut s = state.borrow_mut();
-            if s.data.as_ref() != Some(&val) {
-                s.data = Some(val);
-                s.current_id += 1;
-                s.wakers.wake();
-            }
-        })
-    }
-}
-
 impl<M: RawMutex, T: Clone, const N: usize> Watch<M, T, N> {
     /// Create a new `Watch` channel.
     pub const fn new() -> Self {
@@ -463,13 +450,6 @@ impl<'a, T: Clone, W: WatchBehavior<T> + ?Sized> Snd<'a, T, W> {
         F: Fn(&mut Option<T>),
     {
         self.watch.modify(&mut f)
-    }
-}
-
-impl<'a, T: Clone + PartialEq, W: WatchBehavior<T> + WatchBehaviorPartialEq<T> + ?Sized> Snd<'a, T, W> {
-    /// Sends a new value to the `Watch` if it is different from the current value.
-    pub fn send_if_different(&self, val: T) {
-        self.watch.send_if_different(val)
     }
 }
 
@@ -850,27 +830,6 @@ mod tests {
             // Obtain receiver and receive value
             let mut rcv = WATCH.receiver().unwrap();
             assert_eq!(rcv.try_changed(), Some(10));
-        };
-        block_on(f);
-    }
-
-    #[test]
-    fn send_if_different() {
-        let f = async {
-            static WATCH: Watch<CriticalSectionRawMutex, u8, 1> = Watch::new();
-
-            // Obtain sender and receiver
-            let snd = WATCH.sender();
-            let mut rcv = WATCH.receiver().unwrap();
-
-            snd.send_if_different(10);
-            assert_eq!(rcv.try_changed(), Some(10));
-
-            snd.send_if_different(10);
-            assert_eq!(rcv.try_changed(), None);
-
-            snd.send_if_different(12);
-            assert_eq!(rcv.try_changed(), Some(12));
         };
         block_on(f);
     }
