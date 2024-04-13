@@ -10,6 +10,7 @@ pub use bd::*;
 
 #[cfg(any(mco, mco1, mco2))]
 mod mco;
+use critical_section::CriticalSection;
 #[cfg(any(mco, mco1, mco2))]
 pub use mco::*;
 
@@ -18,22 +19,21 @@ mod hsi48;
 #[cfg(crs)]
 pub use hsi48::*;
 
-#[cfg_attr(rcc_f0, path = "f0.rs")]
-#[cfg_attr(any(stm32f1), path = "f1.rs")]
-#[cfg_attr(any(stm32f3), path = "f3.rs")]
-#[cfg_attr(any(stm32f2, stm32f4, stm32f7), path = "f.rs")]
-#[cfg_attr(rcc_c0, path = "c0.rs")]
-#[cfg_attr(rcc_g0, path = "g0.rs")]
-#[cfg_attr(rcc_g4, path = "g4.rs")]
+#[cfg_attr(any(stm32f0, stm32f1, stm32f3), path = "f013.rs")]
+#[cfg_attr(any(stm32f2, stm32f4, stm32f7), path = "f247.rs")]
+#[cfg_attr(stm32c0, path = "c0.rs")]
+#[cfg_attr(stm32g0, path = "g0.rs")]
+#[cfg_attr(stm32g4, path = "g4.rs")]
 #[cfg_attr(any(stm32h5, stm32h7), path = "h.rs")]
 #[cfg_attr(any(stm32l0, stm32l1, stm32l4, stm32l5, stm32wb, stm32wl), path = "l.rs")]
-#[cfg_attr(rcc_u5, path = "u5.rs")]
-#[cfg_attr(rcc_wba, path = "wba.rs")]
+#[cfg_attr(stm32u5, path = "u5.rs")]
+#[cfg_attr(stm32wba, path = "wba.rs")]
 mod _version;
 
 pub use _version::*;
 
-pub use crate::_generated::Clocks;
+pub use crate::_generated::{mux, Clocks};
+use crate::time::Hertz;
 
 #[cfg(feature = "low-power")]
 /// Must be written within a critical section
@@ -65,29 +65,21 @@ pub(crate) unsafe fn get_freqs() -> &'static Clocks {
     CLOCK_FREQS.assume_init_ref()
 }
 
-#[cfg(feature = "unstable-pac")]
-pub mod low_level {
-    pub use super::sealed::*;
-}
+pub(crate) trait SealedRccPeripheral {
+    fn frequency() -> crate::time::Hertz;
+    fn enable_and_reset_with_cs(cs: CriticalSection);
+    fn disable_with_cs(cs: CriticalSection);
 
-pub(crate) mod sealed {
-    use critical_section::CriticalSection;
-
-    pub trait RccPeripheral {
-        fn frequency() -> crate::time::Hertz;
-        fn enable_and_reset_with_cs(cs: CriticalSection);
-        fn disable_with_cs(cs: CriticalSection);
-
-        fn enable_and_reset() {
-            critical_section::with(|cs| Self::enable_and_reset_with_cs(cs))
-        }
-        fn disable() {
-            critical_section::with(|cs| Self::disable_with_cs(cs))
-        }
+    fn enable_and_reset() {
+        critical_section::with(|cs| Self::enable_and_reset_with_cs(cs))
+    }
+    fn disable() {
+        critical_section::with(|cs| Self::disable_with_cs(cs))
     }
 }
 
-pub trait RccPeripheral: sealed::RccPeripheral + 'static {}
+#[allow(private_bounds)]
+pub trait RccPeripheral: SealedRccPeripheral + 'static {}
 
 #[allow(unused)]
 mod util {
@@ -117,4 +109,13 @@ mod util {
         }
         Ok(Some(x))
     }
+}
+
+/// Get the kernel clock frequency of the peripheral `T`.
+///
+/// # Panics
+///
+/// Panics if the clock is not active.
+pub fn frequency<T: RccPeripheral>() -> Hertz {
+    T::frequency()
 }

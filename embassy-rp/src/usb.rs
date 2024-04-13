@@ -14,20 +14,19 @@ use embassy_usb_driver::{
 use crate::interrupt::typelevel::{Binding, Interrupt};
 use crate::{interrupt, pac, peripherals, Peripheral, RegExt};
 
-pub(crate) mod sealed {
-    pub trait Instance {
-        fn regs() -> crate::pac::usb::Usb;
-        fn dpram() -> crate::pac::usb_dpram::UsbDpram;
-    }
+trait SealedInstance {
+    fn regs() -> crate::pac::usb::Usb;
+    fn dpram() -> crate::pac::usb_dpram::UsbDpram;
 }
 
 /// USB peripheral instance.
-pub trait Instance: sealed::Instance + 'static {
+#[allow(private_bounds)]
+pub trait Instance: SealedInstance + 'static {
     /// Interrupt for this peripheral.
     type Interrupt: interrupt::typelevel::Interrupt;
 }
 
-impl crate::usb::sealed::Instance for peripherals::USB {
+impl crate::usb::SealedInstance for peripherals::USB {
     fn regs() -> pac::usb::Usb {
         pac::USBCTRL_REGS
     }
@@ -465,7 +464,6 @@ impl<'d, T: Instance> driver::Bus for Bus<'d, T> {
 
 trait Dir {
     fn dir() -> Direction;
-    fn waker(i: usize) -> &'static AtomicWaker;
 }
 
 /// Type for In direction.
@@ -474,11 +472,6 @@ impl Dir for In {
     fn dir() -> Direction {
         Direction::In
     }
-
-    #[inline]
-    fn waker(i: usize) -> &'static AtomicWaker {
-        &EP_IN_WAKERS[i]
-    }
 }
 
 /// Type for Out direction.
@@ -486,11 +479,6 @@ pub enum Out {}
 impl Dir for Out {
     fn dir() -> Direction {
         Direction::Out
-    }
-
-    #[inline]
-    fn waker(i: usize) -> &'static AtomicWaker {
-        &EP_OUT_WAKERS[i]
     }
 }
 

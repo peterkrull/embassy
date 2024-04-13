@@ -263,6 +263,12 @@ impl<'ch, T> Future for DynamicReceiveFuture<'ch, T> {
     }
 }
 
+impl<'ch, M: RawMutex, T, const N: usize> From<ReceiveFuture<'ch, M, T, N>> for DynamicReceiveFuture<'ch, T> {
+    fn from(value: ReceiveFuture<'ch, M, T, N>) -> Self {
+        Self { channel: value.channel }
+    }
+}
+
 /// Future returned by [`Channel::send`] and  [`Sender::send`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct SendFuture<'ch, M, T, const N: usize>
@@ -320,6 +326,15 @@ impl<'ch, T> Future for DynamicSendFuture<'ch, T> {
 }
 
 impl<'ch, T> Unpin for DynamicSendFuture<'ch, T> {}
+
+impl<'ch, M: RawMutex, T, const N: usize> From<SendFuture<'ch, M, T, N>> for DynamicSendFuture<'ch, T> {
+    fn from(value: SendFuture<'ch, M, T, N>) -> Self {
+        Self {
+            channel: value.channel,
+            message: value.message,
+        }
+    }
+}
 
 pub(crate) trait DynamicChannel<T> {
     fn try_send_with_context(&self, message: T, cx: Option<&mut Context<'_>>) -> Result<(), TrySendError<T>>;
@@ -434,6 +449,18 @@ impl<T, const N: usize> ChannelState<T, N> {
             Poll::Pending
         }
     }
+
+    fn len(&self) -> usize {
+        self.queue.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    fn is_full(&self) -> bool {
+        self.queue.is_full()
+    }
 }
 
 /// A bounded channel for communicating between asynchronous tasks
@@ -507,6 +534,16 @@ where
         Receiver { channel: self }
     }
 
+    /// Get a sender for this channel using dynamic dispatch.
+    pub fn dyn_sender(&self) -> DynamicSender<'_, T> {
+        DynamicSender { channel: self }
+    }
+
+    /// Get a receiver for this channel using dynamic dispatch.
+    pub fn dyn_receiver(&self) -> DynamicReceiver<'_, T> {
+        DynamicReceiver { channel: self }
+    }
+
     /// Send a value, waiting until there is capacity.
     ///
     /// Sending completes when the value has been pushed to the channel's queue.
@@ -546,6 +583,21 @@ where
     /// if the channel is empty.
     pub fn try_receive(&self) -> Result<T, TryReceiveError> {
         self.lock(|c| c.try_receive())
+    }
+
+    /// Returns the number of elements currently in the channel.
+    pub fn len(&self) -> usize {
+        self.lock(|c| c.len())
+    }
+
+    /// Returns whether the channel is empty.
+    pub fn is_empty(&self) -> bool {
+        self.lock(|c| c.is_empty())
+    }
+
+    /// Returns whether the channel is full.
+    pub fn is_full(&self) -> bool {
+        self.lock(|c| c.is_full())
     }
 }
 
@@ -648,10 +700,20 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_dispatch() {
+    fn dynamic_dispatch_into() {
         let c = Channel::<NoopRawMutex, u32, 3>::new();
         let s: DynamicSender<'_, u32> = c.sender().into();
         let r: DynamicReceiver<'_, u32> = c.receiver().into();
+
+        assert!(s.try_send(1).is_ok());
+        assert_eq!(r.try_receive().unwrap(), 1);
+    }
+
+    #[test]
+    fn dynamic_dispatch_constructor() {
+        let c = Channel::<NoopRawMutex, u32, 3>::new();
+        let s = c.dyn_sender();
+        let r = c.dyn_receiver();
 
         assert!(s.try_send(1).is_ok());
         assert_eq!(r.try_receive().unwrap(), 1);

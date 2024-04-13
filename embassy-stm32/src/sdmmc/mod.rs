@@ -13,8 +13,7 @@ use embassy_sync::waitqueue::AtomicWaker;
 use sdio_host::{BusWidth, CardCapacity, CardStatus, CurrentState, SDStatus, CID, CSD, OCR, SCR};
 
 use crate::dma::NoDma;
-use crate::gpio::sealed::{AFType, Pin};
-use crate::gpio::{AnyPin, Pull, Speed};
+use crate::gpio::{AFType, AnyPin, Pull, SealedPin, Speed};
 use crate::interrupt::typelevel::Interrupt;
 use crate::pac::sdmmc::Sdmmc as RegBlock;
 use crate::rcc::RccPeripheral;
@@ -228,10 +227,10 @@ fn clk_div(ker_ck: Hertz, sdmmc_ck: u32) -> Result<(bool, u16, Hertz), Error> {
 }
 
 #[cfg(sdmmc_v1)]
-type Transfer<'a, C> = crate::dma::Transfer<'a, C>;
+type Transfer<'a> = crate::dma::Transfer<'a>;
 #[cfg(sdmmc_v2)]
-struct Transfer<'a, C> {
-    _dummy: core::marker::PhantomData<&'a mut C>,
+struct Transfer<'a> {
+    _dummy: PhantomData<&'a ()>,
 }
 
 #[cfg(all(sdmmc_v1, dma))]
@@ -240,12 +239,14 @@ const DMA_TRANSFER_OPTIONS: crate::dma::TransferOptions = crate::dma::TransferOp
     mburst: crate::dma::Burst::Incr4,
     flow_ctrl: crate::dma::FlowControl::Peripheral,
     fifo_threshold: Some(crate::dma::FifoThreshold::Full),
+    priority: crate::dma::Priority::VeryHigh,
     circular: false,
     half_transfer_ir: false,
     complete_transfer_ir: true,
 };
 #[cfg(all(sdmmc_v1, not(dma)))]
 const DMA_TRANSFER_OPTIONS: crate::dma::TransferOptions = crate::dma::TransferOptions {
+    priority: crate::dma::Priority::VeryHigh,
     circular: false,
     half_transfer_ir: false,
     complete_transfer_ir: true,
@@ -548,7 +549,7 @@ impl<'d, T: Instance, Dma: SdmmcDma<T> + 'd> Sdmmc<'d, T, Dma> {
         buffer: &'a mut [u32],
         length_bytes: u32,
         block_size: u8,
-    ) -> Transfer<'a, Dma> {
+    ) -> Transfer<'a> {
         assert!(block_size <= 14, "Block size up to 2^14 bytes");
         let regs = T::regs();
 
@@ -596,12 +597,7 @@ impl<'d, T: Instance, Dma: SdmmcDma<T> + 'd> Sdmmc<'d, T, Dma> {
     /// # Safety
     ///
     /// `buffer` must be valid for the whole transfer and word aligned
-    fn prepare_datapath_write<'a>(
-        &'a mut self,
-        buffer: &'a [u32],
-        length_bytes: u32,
-        block_size: u8,
-    ) -> Transfer<'a, Dma> {
+    fn prepare_datapath_write<'a>(&'a mut self, buffer: &'a [u32], length_bytes: u32, block_size: u8) -> Transfer<'a> {
         assert!(block_size <= 14, "Block size up to 2^14 bytes");
         let regs = T::regs();
 
@@ -1421,21 +1417,17 @@ impl Cmd {
 
 //////////////////////////////////////////////////////
 
-pub(crate) mod sealed {
-    use super::*;
-
-    pub trait Instance {
-        type Interrupt: interrupt::typelevel::Interrupt;
-
-        fn regs() -> RegBlock;
-        fn state() -> &'static AtomicWaker;
-    }
-
-    pub trait Pins<T: Instance> {}
+trait SealedInstance {
+    fn regs() -> RegBlock;
+    fn state() -> &'static AtomicWaker;
 }
 
 /// SDMMC instance trait.
-pub trait Instance: sealed::Instance + RccPeripheral + 'static {}
+#[allow(private_bounds)]
+pub trait Instance: SealedInstance + RccPeripheral + 'static {
+    /// Interrupt for this instance.
+    type Interrupt: interrupt::typelevel::Interrupt;
+}
 
 pin_trait!(CkPin, Instance);
 pin_trait!(CmdPin, Instance);
@@ -1462,9 +1454,7 @@ impl<T: Instance> SdmmcDma<T> for NoDma {}
 
 foreach_peripheral!(
     (sdmmc, $inst:ident) => {
-        impl sealed::Instance for peripherals::$inst {
-            type Interrupt = crate::interrupt::typelevel::$inst;
-
+        impl SealedInstance for peripherals::$inst {
             fn regs() -> RegBlock {
                 crate::pac::$inst
             }
@@ -1475,6 +1465,8 @@ foreach_peripheral!(
             }
         }
 
-        impl Instance for peripherals::$inst {}
+        impl Instance for peripherals::$inst {
+            type Interrupt = crate::interrupt::typelevel::$inst;
+        }
     };
 );

@@ -32,8 +32,13 @@ pub mod timer;
 pub mod adc;
 #[cfg(can)]
 pub mod can;
+// FIXME: Cordic driver cause stm32u5a5zj crash
+#[cfg(all(cordic, not(any(stm32u5a5, stm32u5a9))))]
+pub mod cordic;
 #[cfg(crc)]
 pub mod crc;
+#[cfg(cryp)]
+pub mod cryp;
 #[cfg(dac)]
 pub mod dac;
 #[cfg(dcmi)]
@@ -59,6 +64,8 @@ pub mod ipcc;
 pub mod low_power;
 #[cfg(opamp)]
 pub mod opamp;
+#[cfg(octospi)]
+pub mod ospi;
 #[cfg(quadspi)]
 pub mod qspi;
 #[cfg(rng)]
@@ -71,14 +78,14 @@ pub mod sai;
 pub mod sdmmc;
 #[cfg(spi)]
 pub mod spi;
+#[cfg(ucpd)]
+pub mod ucpd;
 #[cfg(uid)]
 pub mod uid;
 #[cfg(usart)]
 pub mod usart;
-#[cfg(usb)]
+#[cfg(any(usb, otg))]
 pub mod usb;
-#[cfg(otg)]
-pub mod usb_otg;
 #[cfg(iwdg)]
 pub mod wdg;
 
@@ -103,10 +110,10 @@ pub use crate::_generated::interrupt;
 /// Example of how to bind one interrupt:
 ///
 /// ```rust,ignore
-/// use embassy_stm32::{bind_interrupts, usb_otg, peripherals};
+/// use embassy_stm32::{bind_interrupts, usb, peripherals};
 ///
 /// bind_interrupts!(struct Irqs {
-///     OTG_FS => usb_otg::InterruptHandler<peripherals::USB_OTG_FS>;
+///     OTG_FS => usb::InterruptHandler<peripherals::USB_OTG_FS>;
 /// });
 /// ```
 ///
@@ -156,7 +163,7 @@ pub(crate) use stm32_metapac as pac;
 use crate::interrupt::Priority;
 #[cfg(feature = "rt")]
 pub use crate::pac::NVIC_PRIO_BITS;
-use crate::rcc::sealed::RccPeripheral;
+use crate::rcc::SealedRccPeripheral;
 
 /// `embassy-stm32` global configuration.
 #[non_exhaustive]
@@ -166,9 +173,17 @@ pub struct Config {
 
     /// Enable debug during sleep and stop.
     ///
-    /// May incrase power consumption. Defaults to true.
+    /// May increase power consumption. Defaults to true.
     #[cfg(dbgmcu)]
     pub enable_debug_during_sleep: bool,
+
+    /// On low-power boards (eg. `stm32l4`, `stm32l5` and `stm32u5`),
+    /// some GPIO pins are powered by an auxiliary, independent power supply (`VDDIO2`),
+    /// which needs to be enabled before these pins can be used.
+    ///
+    /// May increase power consumption. Defaults to true.
+    #[cfg(any(stm32l4, stm32l5, stm32u5))]
+    pub enable_independent_io_supply: bool,
 
     /// BDMA interrupt priority.
     ///
@@ -187,6 +202,18 @@ pub struct Config {
     /// Defaults to P0 (highest).
     #[cfg(gpdma)]
     pub gpdma_interrupt_priority: Priority,
+
+    /// Enables UCPD1 dead battery functionality.
+    ///
+    /// Defaults to false (disabled).
+    #[cfg(peri_ucpd1)]
+    pub enable_ucpd1_dead_battery: bool,
+
+    /// Enables UCPD2 dead battery functionality.
+    ///
+    /// Defaults to false (disabled).
+    #[cfg(peri_ucpd2)]
+    pub enable_ucpd2_dead_battery: bool,
 }
 
 impl Default for Config {
@@ -195,12 +222,18 @@ impl Default for Config {
             rcc: Default::default(),
             #[cfg(dbgmcu)]
             enable_debug_during_sleep: true,
+            #[cfg(any(stm32l4, stm32l5, stm32u5))]
+            enable_independent_io_supply: true,
             #[cfg(bdma)]
             bdma_interrupt_priority: Priority::P0,
             #[cfg(dma)]
             dma_interrupt_priority: Priority::P0,
             #[cfg(gpdma)]
             gpdma_interrupt_priority: Priority::P0,
+            #[cfg(peri_ucpd1)]
+            enable_ucpd1_dead_battery: false,
+            #[cfg(peri_ucpd2)]
+            enable_ucpd2_dead_battery: false,
         }
     }
 }
@@ -216,6 +249,11 @@ pub fn init(config: Config) -> Peripherals {
 
         #[cfg(dbgmcu)]
         crate::pac::DBGMCU.cr().modify(|cr| {
+            #[cfg(dbgmcu_h5)]
+            {
+                cr.set_stop(config.enable_debug_during_sleep);
+                cr.set_standby(config.enable_debug_during_sleep);
+            }
             #[cfg(any(dbgmcu_f0, dbgmcu_c0, dbgmcu_g0, dbgmcu_u5, dbgmcu_wba, dbgmcu_l5))]
             {
                 cr.set_dbg_stop(config.enable_debug_during_sleep);
@@ -247,7 +285,44 @@ pub fn init(config: Config) -> Peripherals {
         #[cfg(not(any(stm32f2, stm32f4, stm32f7, stm32l0, stm32h5, stm32h7)))]
         peripherals::FLASH::enable_and_reset_with_cs(cs);
 
+        // Enable the VDDIO2 power supply on chips that have it.
+        // Note that this requires the PWR peripheral to be enabled first.
+        #[cfg(any(stm32l4, stm32l5))]
+        {
+            crate::pac::PWR.cr2().modify(|w| {
+                // The official documentation states that we should ideally enable VDDIO2
+                // through the PVME2 bit, but it looks like this isn't required,
+                // and CubeMX itself skips this step.
+                w.set_iosv(config.enable_independent_io_supply);
+            });
+        }
+        #[cfg(stm32u5)]
+        {
+            crate::pac::PWR.svmcr().modify(|w| {
+                w.set_io2sv(config.enable_independent_io_supply);
+            });
+        }
+
+        // dead battery functionality is still present on these
+        // chips despite them not having UCPD- disable it
+        #[cfg(any(stm32g070, stm32g0b0))]
+        {
+            crate::pac::SYSCFG.cfgr1().modify(|w| {
+                w.set_ucpd1_strobe(true);
+                w.set_ucpd2_strobe(true);
+            });
+        }
+
         unsafe {
+            #[cfg(ucpd)]
+            ucpd::init(
+                cs,
+                #[cfg(peri_ucpd1)]
+                config.enable_ucpd1_dead_battery,
+                #[cfg(peri_ucpd2)]
+                config.enable_ucpd2_dead_battery,
+            );
+
             #[cfg(feature = "_split-pins-enabled")]
             crate::pac::SYSCFG.pmcr().modify(|pmcr| {
                 #[cfg(feature = "split-pa0")]

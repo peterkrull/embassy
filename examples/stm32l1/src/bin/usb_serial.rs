@@ -27,7 +27,7 @@ async fn main(_spawner: Spawner) {
             mul: PllMul::MUL6, // PLLVCO = 16*6 = 96Mhz
             div: PllDiv::DIV3, // 32Mhz clock (16 * 6 / 3)
         });
-        config.rcc.mux = ClockSrc::PLL1_R;
+        config.rcc.sys = Sysclk::PLL1_R;
     }
 
     let p = embassy_stm32::init(config);
@@ -46,7 +46,6 @@ async fn main(_spawner: Spawner) {
     config.device_protocol = 0x01;
     config.composite_with_iads = true;
 
-    let mut device_descriptor = [0; 256];
     let mut config_descriptor = [0; 256];
     let mut bos_descriptor = [0; 256];
     let mut control_buf = [0; 64];
@@ -56,7 +55,6 @@ async fn main(_spawner: Spawner) {
     let mut builder = Builder::new(
         driver,
         config,
-        &mut device_descriptor,
         &mut config_descriptor,
         &mut bos_descriptor,
         &mut [], // no msos descriptors

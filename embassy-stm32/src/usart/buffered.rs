@@ -1,13 +1,10 @@
-use core::future::poll_fn;
 use core::slice;
-use core::sync::atomic::{AtomicBool, Ordering};
-use core::task::Poll;
+use core::sync::atomic::AtomicBool;
 
 use embassy_hal_internal::atomic_ring_buffer::RingBuffer;
 use embassy_sync::waitqueue::AtomicWaker;
 
 use super::*;
-use crate::interrupt::typelevel::Interrupt;
 
 /// Interrupt handler.
 pub struct InterruptHandler<T: BasicInstance> {
@@ -55,7 +52,7 @@ impl<T: BasicInstance> interrupt::typelevel::Handler<T::Interrupt> for Interrupt
                 // FIXME: Should we disable any further RX interrupts when the buffer becomes full.
             }
 
-            if state.rx_buf.is_full() {
+            if !state.rx_buf.is_empty() {
                 state.rx_waker.wake();
             }
         }
@@ -108,27 +105,23 @@ impl<T: BasicInstance> interrupt::typelevel::Handler<T::Interrupt> for Interrupt
     }
 }
 
-pub(crate) use sealed::State;
-pub(crate) mod sealed {
-    use super::*;
-    pub struct State {
-        pub(crate) rx_waker: AtomicWaker,
-        pub(crate) rx_buf: RingBuffer,
-        pub(crate) tx_waker: AtomicWaker,
-        pub(crate) tx_buf: RingBuffer,
-        pub(crate) tx_done: AtomicBool,
-    }
+pub(crate) struct State {
+    pub(crate) rx_waker: AtomicWaker,
+    pub(crate) rx_buf: RingBuffer,
+    pub(crate) tx_waker: AtomicWaker,
+    pub(crate) tx_buf: RingBuffer,
+    pub(crate) tx_done: AtomicBool,
+}
 
-    impl State {
-        /// Create new state
-        pub const fn new() -> Self {
-            Self {
-                rx_buf: RingBuffer::new(),
-                tx_buf: RingBuffer::new(),
-                rx_waker: AtomicWaker::new(),
-                tx_waker: AtomicWaker::new(),
-                tx_done: AtomicBool::new(true),
-            }
+impl State {
+    /// Create new state
+    pub(crate) const fn new() -> Self {
+        Self {
+            rx_buf: RingBuffer::new(),
+            tx_buf: RingBuffer::new(),
+            rx_waker: AtomicWaker::new(),
+            tx_waker: AtomicWaker::new(),
+            tx_done: AtomicBool::new(true),
         }
     }
 }

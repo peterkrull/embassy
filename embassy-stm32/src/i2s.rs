@@ -1,8 +1,7 @@
 //! Inter-IC Sound (I2S)
 use embassy_hal_internal::into_ref;
 
-use crate::gpio::sealed::{AFType, Pin as _};
-use crate::gpio::AnyPin;
+use crate::gpio::{AFType, AnyPin, SealedPin};
 use crate::pac::spi::vals;
 use crate::spi::{Config as SpiConfig, *};
 use crate::time::Hertz;
@@ -79,20 +78,20 @@ impl Format {
     #[cfg(any(spi_v1, spi_f1))]
     const fn datlen(&self) -> vals::Datlen {
         match self {
-            Format::Data16Channel16 => vals::Datlen::SIXTEENBIT,
-            Format::Data16Channel32 => vals::Datlen::SIXTEENBIT,
-            Format::Data24Channel32 => vals::Datlen::TWENTYFOURBIT,
-            Format::Data32Channel32 => vals::Datlen::THIRTYTWOBIT,
+            Format::Data16Channel16 => vals::Datlen::BITS16,
+            Format::Data16Channel32 => vals::Datlen::BITS16,
+            Format::Data24Channel32 => vals::Datlen::BITS24,
+            Format::Data32Channel32 => vals::Datlen::BITS32,
         }
     }
 
     #[cfg(any(spi_v1, spi_f1))]
     const fn chlen(&self) -> vals::Chlen {
         match self {
-            Format::Data16Channel16 => vals::Chlen::SIXTEENBIT,
-            Format::Data16Channel32 => vals::Chlen::THIRTYTWOBIT,
-            Format::Data24Channel32 => vals::Chlen::THIRTYTWOBIT,
-            Format::Data32Channel32 => vals::Chlen::THIRTYTWOBIT,
+            Format::Data16Channel16 => vals::Chlen::BITS16,
+            Format::Data16Channel32 => vals::Chlen::BITS32,
+            Format::Data24Channel32 => vals::Chlen::BITS32,
+            Format::Data32Channel32 => vals::Chlen::BITS32,
         }
     }
 }
