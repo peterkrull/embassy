@@ -66,6 +66,7 @@ cortex-m = "0.7.6"
 futures = { version = "0.3.17", default-features = false, features = ["async-await"] }
 rand_core = "0.6.3"
 sdio-host = "0.5.0"
+embedded-sdmmc = { git = "https://github.com/peterkrull/embedded-sdmmc-rs", branch = "develop-async", optional = true }
 critical-section = "1.1"
 #stm32-metapac = { version = "15" }
 stm32-metapac = { git = "https://github.com/embassy-rs/stm32-data-generated", tag = "stm32-data-8a3ad0b738292ae40af201d79b28db60fe876e11" }
@@ -122,6 +123,8 @@ time = ["dep:embassy-time"]
 # Features starting with `_` are for internal use only. They're not intended
 # to be enabled by other crates, and are not covered by semver guarantees.
 _time-driver = ["dep:embassy-time-driver", "time"]
+
+embedded-sdmmc = ["dep:embedded-sdmmc"]
 
 ## Use any time driver
 time-driver-any = ["_time-driver"]
