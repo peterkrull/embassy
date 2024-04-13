@@ -1474,8 +1474,6 @@ foreach_peripheral!(
 #[cfg(feature = "embedded-sdmmc")]
 mod sdmmc_rs {
     use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
-    use embassy_stm32::time::Hertz;
-    
     use core::cell::RefCell;
 
     use super::*;
