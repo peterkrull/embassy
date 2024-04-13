@@ -1495,7 +1495,7 @@ mod sdmmc_rs {
     }
 
     impl <'d, T: Instance, Dma: SdmmcDma<T>> BlockDevice for Stm32Sdmmc<'d, T, Dma> {
-        type Error = embassy_stm32::sdmmc::Error;
+        type Error = Error;
 
         async fn read(
             &self,
