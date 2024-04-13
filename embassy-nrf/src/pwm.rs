@@ -6,8 +6,7 @@ use core::sync::atomic::{compiler_fence, Ordering};
 
 use embassy_hal_internal::{into_ref, PeripheralRef};
 
-use crate::gpio::sealed::Pin as _;
-use crate::gpio::{AnyPin, Pin as GpioPin, PselBits};
+use crate::gpio::{AnyPin, Pin as GpioPin, PselBits, SealedPin as _};
 use crate::ppi::{Event, Task};
 use crate::util::slice_in_ram_or;
 use crate::{interrupt, pac, Peripheral};
@@ -444,7 +443,7 @@ impl<'d, 's, T: Instance> Sequencer<'d, 's, T> {
             return Err(Error::SequenceTimesAtLeastOne);
         }
 
-        let _ = self.stop();
+        self.stop();
 
         let r = T::regs();
 
@@ -507,7 +506,7 @@ impl<'d, 's, T: Instance> Sequencer<'d, 's, T> {
 
 impl<'d, 's, T: Instance> Drop for Sequencer<'d, 's, T> {
     fn drop(&mut self) {
-        let _ = self.stop();
+        self.stop();
     }
 }
 
@@ -697,7 +696,7 @@ impl<'d, T: Instance> SimplePwm<'d, T> {
         // Enable
         r.enable.write(|w| w.enable().enabled());
 
-        r.seq0.ptr.write(|w| unsafe { w.bits((&pwm.duty).as_ptr() as u32) });
+        r.seq0.ptr.write(|w| unsafe { w.bits((pwm.duty).as_ptr() as u32) });
 
         r.seq0.cnt.write(|w| unsafe { w.bits(4) });
         r.seq0.refresh.write(|w| unsafe { w.bits(0) });
@@ -748,7 +747,7 @@ impl<'d, T: Instance> SimplePwm<'d, T> {
         self.duty[channel] = duty & 0x7FFF;
 
         // reload ptr in case self was moved
-        r.seq0.ptr.write(|w| unsafe { w.bits((&self.duty).as_ptr() as u32) });
+        r.seq0.ptr.write(|w| unsafe { w.bits((self.duty).as_ptr() as u32) });
 
         // defensive before seqstart
         compiler_fence(Ordering::SeqCst);
@@ -847,23 +846,20 @@ impl<'a, T: Instance> Drop for SimplePwm<'a, T> {
     }
 }
 
-pub(crate) mod sealed {
-    use super::*;
-
-    pub trait Instance {
-        fn regs() -> &'static pac::pwm0::RegisterBlock;
-    }
+pub(crate) trait SealedInstance {
+    fn regs() -> &'static pac::pwm0::RegisterBlock;
 }
 
 /// PWM peripheral instance.
-pub trait Instance: Peripheral<P = Self> + sealed::Instance + 'static {
+#[allow(private_bounds)]
+pub trait Instance: Peripheral<P = Self> + SealedInstance + 'static {
     /// Interrupt for this peripheral.
     type Interrupt: interrupt::typelevel::Interrupt;
 }
 
 macro_rules! impl_pwm {
     ($type:ident, $pac_type:ident, $irq:ident) => {
-        impl crate::pwm::sealed::Instance for peripherals::$type {
+        impl crate::pwm::SealedInstance for peripherals::$type {
             fn regs() -> &'static pac::pwm0::RegisterBlock {
                 unsafe { &*pac::$pac_type::ptr() }
             }
