@@ -1542,4 +1542,5 @@ mod sdmmc_rs {
     }
 }
 
+#[cfg(feature = "embedded-sdmmc")]
 pub use sdmmc_rs::Stm32Sdmmc;
