@@ -1542,5 +1542,6 @@ mod sdmmc_rs {
             sdmmc.init_card(self.freq).await
         }
     }
-
 }
+
+pub use sdmmc_rs::Stm32Sdmmc;
