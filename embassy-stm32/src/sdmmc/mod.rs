@@ -1474,49 +1474,73 @@ foreach_peripheral!(
 #[cfg(feature = "embedded-sdmmc")]
 mod sdmmc_rs {
     use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
+    use embassy_stm32::time::Hertz;
+    
+    use core::cell::RefCell;
 
     use super::*;
 
-    impl<'d, T: Instance, Dma: SdmmcDma<T>> BlockDevice for Sdmmc<'d, T, Dma> {
-        type Error = Error;
+    /// A BlockDevice implementation for the STM32 SDMMC peripheral.
+    pub struct Stm32Sdmmc<'d, T: Instance, Dma: SdmmcDma<T>> {
+        inner: RefCell<Sdmmc<'d, T, Dma>>,
+        freq: Hertz,
+    }
+
+    impl <'d, T: Instance, Dma: SdmmcDma<T>> Stm32Sdmmc<'d, T, Dma> {
+        /// Create a new Stm32Sdmmc instance.
+        pub fn new(sdmmc: Sdmmc<'d, T, Dma>) -> Self {
+            Self {
+                inner: RefCell::new(sdmmc),
+                freq: Hertz::mhz(24),
+            }
+        }
+    }
+
+    impl <'d, T: Instance, Dma: SdmmcDma<T>> BlockDevice for Stm32Sdmmc<'d, T, Dma> {
+        type Error = embassy_stm32::sdmmc::Error;
 
         async fn read(
-            &mut self,
+            &self,
             blocks: &mut [Block],
             start_block_idx: BlockIdx,
             _reason: &str,
         ) -> Result<(), Self::Error> {
-            let mut address = start_block_idx.0;
+            let mut sdmmc = self.inner.borrow_mut();
 
-            for block in blocks.iter_mut() {
+            for (offset, block) in blocks.iter_mut().enumerate() {
                 let block: &mut [u8; 512] = &mut block.contents;
 
                 // NOTE(unsafe) Block uses align(4)
                 let block = unsafe { &mut *(block as *mut _ as *mut DataBlock) };
-                self.read_block(address, block).await?;
-                address += 1;
+                sdmmc.read_block(start_block_idx.0 + offset as u32, block).await?;
             }
             Ok(())
         }
 
-        async fn write(&mut self, blocks: &[Block], start_block_idx: BlockIdx) -> Result<(), Self::Error> {
-            let mut address = start_block_idx.0;
+        async fn write(&self, blocks: &[Block], start_block_idx: BlockIdx) -> Result<(), Self::Error> {
+            let mut sdmmc = self.inner.borrow_mut();
 
-            for block in blocks.iter() {
+            for (offset, block) in blocks.iter().enumerate() {
                 let block: &[u8; 512] = &block.contents;
 
                 // NOTE(unsafe) DataBlock uses align 4
                 let block = unsafe { &*(block as *const _ as *const DataBlock) };
-                self.write_block(address, block).await?;
-                address += 1;
+                sdmmc.write_block(start_block_idx.0 + offset as u32, block).await?;
             }
             Ok(())
         }
 
-        fn num_blocks(&self) -> Result<BlockCount, Self::Error> {
-            let card = self.card()?;
+        async fn num_blocks(&self) -> Result<BlockCount, Self::Error> {
+            let sdmmc = self.inner.borrow_mut();
+            let card = sdmmc.card()?;
             let count = card.csd.block_count();
             Ok(BlockCount(count))
         }
+        
+        async fn reset(&self) -> Result<(), Self::Error> {
+            let mut sdmmc = self.inner.borrow_mut();
+            sdmmc.init_card(self.freq).await
+        }
     }
+
 }
