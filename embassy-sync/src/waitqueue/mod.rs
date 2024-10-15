@@ -9,3 +9,6 @@ pub use waker_registration::*;
 
 mod multi_waker;
 pub use multi_waker::*;
+
+mod linked_waker;
+pub use linked_waker::*;
