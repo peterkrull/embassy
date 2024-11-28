@@ -2,6 +2,10 @@
 #[cfg(any(feature = "executor-thread", feature = "executor-interrupt"))]
 fn __pender(context: *mut ()) {
     unsafe {
+        // Add time passed if we just woke from sleep
+        #[cfg(feature = "cpu-utilization")]
+        crate::CPU_UTIL.entering_pender();
+
         // Safety: `context` is either `usize::MAX` created by `Executor::run`, or a valid interrupt
         // request number given to `InterruptExecutor::start`.
 
@@ -106,6 +110,10 @@ mod thread {
             loop {
                 unsafe {
                     self.inner.poll();
+
+                    #[cfg(feature = "cpu-utilization")]
+                    crate::CPU_UTIL.before_low_power();
+
                     asm!("wfe");
                 };
             }

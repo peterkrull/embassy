@@ -50,6 +50,11 @@ pub mod raw;
 mod spawner;
 pub use spawner::*;
 
+#[cfg(feature = "cpu-utilization")]
+mod utilization;
+#[cfg(feature = "cpu-utilization")]
+pub static CPU_UTIL: utilization::CpuUtil = utilization::CpuUtil::new();
+
 mod config {
     #![allow(unused)]
     include!(concat!(env!("OUT_DIR"), "/config.rs"));
