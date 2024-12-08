@@ -201,6 +201,8 @@ impl<F: Future + 'static> AvailableTask<F> {
 
             let task = TaskRef::new(self.task);
 
+            debug!("Spawning task of size: {}", core::mem::size_of::<F>());
+
             SpawnToken::new(task)
         }
     }
