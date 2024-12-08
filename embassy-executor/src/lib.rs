@@ -114,6 +114,8 @@ pub mod _export {
 
             self.ptr.borrow(cs).set(ptr);
 
+            debug!("At {:?} allocated {} tasks of size {}", res, N, layout.size());
+
             unsafe { &mut *(res as *mut MaybeUninit<T>) }
         }
     }
